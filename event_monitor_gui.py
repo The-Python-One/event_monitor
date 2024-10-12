@@ -104,7 +104,10 @@ class EventMonitorGUI:
 
         ttk.Label(self.time_frame, text="结束时间 (YYYY-MM-DD):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.end_time_entry = ttk.Entry(self.time_frame, width=20)
+        self.end_time_entry.insert(0, "留空表示使用当前时间")
         self.end_time_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.end_time_entry.bind("<FocusIn>", lambda e: self.on_entry_click(e, "留空表示使用当前时间"))
+        self.end_time_entry.bind("<FocusOut>", lambda e: self.on_focus_out(e, "留空表示使用当前时间"))
 
         # 区块范围输入
         self.block_frame = ttk.Frame(self.history_frame)
@@ -117,7 +120,10 @@ class EventMonitorGUI:
 
         ttk.Label(self.block_frame, text="结束区块:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.end_block_entry = ttk.Entry(self.block_frame, width=20)
+        self.end_block_entry.insert(0, "留空表示使用最新区块")
         self.end_block_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.end_block_entry.bind("<FocusIn>", lambda e: self.on_entry_click(e, "留空表示使用最新区块"))
+        self.end_block_entry.bind("<FocusOut>", lambda e: self.on_focus_out(e, "留空表示使用最新区块"))
 
         # 开始按钮
         self.start_button = ttk.Button(frame, text="开始监听", command=self.start_monitoring)
@@ -219,7 +225,7 @@ class EventMonitorGUI:
         self.stop_monitoring.clear()
         self.start_button.config(state="disabled")
         self.stop_button.config(state="normal")
-        self.event_data = []  # 在开始新的监听之前清空事件数据
+        self.event_data = []
         self.save_button.config(state="disabled")
 
         self.output_text.delete(1.0, tk.END)
@@ -230,12 +236,21 @@ class EventMonitorGUI:
             history_type = self.history_type_var.get()
             if history_type == "time":
                 start_time = datetime.strptime(self.start_time_entry.get(), '%Y-%m-%d')
-                end_time = datetime.strptime(self.end_time_entry.get(), '%Y-%m-%d')
+                end_time_str = self.end_time_entry.get()
+                if end_time_str:
+                    end_time = datetime.strptime(end_time_str, '%Y-%m-%d')
+                else:
+                    end_time = datetime.now()
                 self.monitoring_thread = threading.Thread(target=self.run_history_mode, 
                                                           args=(contract_address, abi, start_time, end_time, rpc_url, event_name, "time"))
             else:
                 start_block = int(self.start_block_entry.get())
-                end_block = int(self.end_block_entry.get())
+                end_block_str = self.end_block_entry.get()
+                if end_block_str:
+                    end_block = int(end_block_str)
+                else:
+                    w3 = Web3(Web3.HTTPProvider(rpc_url))
+                    end_block = w3.eth.get_block('latest')['number']
                 self.monitoring_thread = threading.Thread(target=self.run_history_mode, 
                                                           args=(contract_address, abi, start_block, end_block, rpc_url, event_name, "block"))
         else:
@@ -276,17 +291,21 @@ class EventMonitorGUI:
 
     def stop_monitoring_thread(self):
         self.stop_monitoring.set()
+        self.stop_button.config(state="disabled")
+        self.output_queue.put("正在停止监听，请稍候...\n")
+        self.master.after(100, self.check_thread_stopped)
+
+    def check_thread_stopped(self):
         if self.monitoring_thread and self.monitoring_thread.is_alive():
-            self.monitoring_thread.join(timeout=5)
-        self.master.after(100, self.finalize_stop)  # 延迟执行finalize_stop
+            self.master.after(100, self.check_thread_stopped)
+        else:
+            self.finalize_stop()
 
     def finalize_stop(self):
         self.start_button.config(state="normal")
-        self.stop_button.config(state="disabled")
         self.save_button.config(state="normal")
         with self.event_data_lock:
             event_count = len(self.event_data)
-            self.output_queue.put(f"事件数据内容: {self.event_data}\n")  # 添加这行来查看事件数据的内容
         self.output_queue.put(f"监听已停止，总共收集到 {event_count} 个事件\n")
         self.update_output()
 
@@ -392,6 +411,18 @@ class EventMonitorGUI:
             messagebox.showwarning("警告", f"未找到默认的 ABI 文件: {default_abi_path}")
 
         messagebox.showinfo("提示", "测试数据已填充（不包括 RPC 地址）")
+
+    def on_entry_click(self, event, default_text):
+        """当用户点击输入框时，如果内容是默认文本，则清空"""
+        if event.widget.get() == default_text:
+            event.widget.delete(0, "end")
+            event.widget.config(foreground='black')
+
+    def on_focus_out(self, event, default_text):
+        """当输入框失去焦点时，如果为空，则显示默认文本"""
+        if event.widget.get() == '':
+            event.widget.insert(0, default_text)
+            event.widget.config(foreground='grey')
 
 def main():
     root = tk.Tk()
