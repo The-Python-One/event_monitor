@@ -80,11 +80,8 @@ def print_contract_events(
     """
     w3 = initialize_web3(rpc_url)
     contract = w3.eth.contract(address=contract_address, abi=abi)
-    
-    output_queue.put(f"完整 ABI: {json.dumps(abi, indent=2)}\n")
-    
+        
     event_abi = next(item for item in abi if item['type'] == 'event' and item['name'] == event_name)
-    output_queue.put(f"事件 ABI: {json.dumps(event_abi, indent=2)}\n")
     
     event_signature_hash = w3.keccak(text=f"{event_name}({','.join([input['type'] for input in event_abi['inputs']])})").hex()
     
