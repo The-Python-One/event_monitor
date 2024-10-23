@@ -235,22 +235,32 @@ class EventMonitorGUI:
         if mode == "history":
             history_type = self.history_type_var.get()
             if history_type == "time":
-                start_time = datetime.strptime(self.start_time_entry.get(), '%Y-%m-%d')
-                end_time_str = self.end_time_entry.get()
-                if end_time_str:
-                    end_time = datetime.strptime(end_time_str, '%Y-%m-%d')
-                else:
-                    end_time = datetime.now()
+                try:
+                    start_time = datetime.strptime(self.start_time_entry.get(), '%Y-%m-%d')
+                    end_time_str = self.end_time_entry.get()
+                    if end_time_str and end_time_str != "留空表示使用当前时间":
+                        end_time = datetime.strptime(end_time_str, '%Y-%m-%d')
+                    else:
+                        end_time = datetime.now()
+                        self.output_queue.put(f"使用当前时间作为结束时间: {end_time}\n")
+                except ValueError:
+                    messagebox.showerror("错误", "请输入有效的日期格式 (YYYY-MM-DD)")
+                    return
                 self.monitoring_thread = threading.Thread(target=self.run_history_mode, 
                                                           args=(contract_address, abi, start_time, end_time, rpc_url, event_name, "time"))
             else:
-                start_block = int(self.start_block_entry.get())
-                end_block_str = self.end_block_entry.get()
-                if end_block_str:
-                    end_block = int(end_block_str)
-                else:
-                    w3 = Web3(Web3.HTTPProvider(rpc_url))
-                    end_block = w3.eth.get_block('latest')['number']
+                try:
+                    start_block = int(self.start_block_entry.get())
+                    end_block_str = self.end_block_entry.get()
+                    if end_block_str and end_block_str != "留空表示使用最新区块":
+                        end_block = int(end_block_str)
+                    else:
+                        w3 = Web3(Web3.HTTPProvider(rpc_url))
+                        end_block = w3.eth.get_block('latest')['number']
+                        self.output_queue.put(f"使用最新区块作为结束区块: {end_block}\n")
+                except ValueError:
+                    messagebox.showerror("错误", "请输入有效的区块号")
+                    return
                 self.monitoring_thread = threading.Thread(target=self.run_history_mode, 
                                                           args=(contract_address, abi, start_block, end_block, rpc_url, event_name, "block"))
         else:
@@ -417,11 +427,17 @@ class EventMonitorGUI:
         if event.widget.get() == default_text:
             event.widget.delete(0, "end")
             event.widget.config(foreground='black')
+        if event.widget == self.end_block_entry and event.widget.get() == "留空表示使用最新区块":
+            event.widget.delete(0, "end")
+            event.widget.config(foreground='black')
 
     def on_focus_out(self, event, default_text):
         """当输入框失去焦点时，如果为空，则显示默认文本"""
         if event.widget.get() == '':
             event.widget.insert(0, default_text)
+            event.widget.config(foreground='grey')
+        if event.widget == self.end_block_entry and event.widget.get() == '':
+            event.widget.insert(0, "留空表示使用最新区块")
             event.widget.config(foreground='grey')
 
 def main():
