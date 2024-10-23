@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 def initialize_web3(rpc_url: str) -> Web3:
     """初始化并返回Web3实例。"""
     w3 = Web3(Web3.HTTPProvider(rpc_url))
+    if not w3.is_connected():
+        raise ConnectionError(f"无法连接到 RPC 节点: {rpc_url}")
     logger.info(f"Web3连接已初始化: {w3.is_connected()}")
+    logger.info(f"当前网络 ID: {w3.eth.chain_id}")
+    logger.info(f"最新区块号: {w3.eth.block_number}")
     return w3
 
 def find_block_by_timestamp(w3: Web3, target_timestamp: float) -> int:
@@ -75,31 +79,38 @@ def print_contract_events(
     打印指定范围内合约的特定事件交易数据。
     """
     w3 = initialize_web3(rpc_url)
-    output_queue.put(f"Web3连接已初始化: {w3.is_connected()}\n")
-    
-    contract_address = Web3.to_checksum_address(contract_address)
     contract = w3.eth.contract(address=contract_address, abi=abi)
+    
+    output_queue.put(f"完整 ABI: {json.dumps(abi, indent=2)}\n")
+    
+    event_abi = next(item for item in abi if item['type'] == 'event' and item['name'] == event_name)
+    output_queue.put(f"事件 ABI: {json.dumps(event_abi, indent=2)}\n")
+    
+    event_signature_hash = w3.keccak(text=f"{event_name}({','.join([input['type'] for input in event_abi['inputs']])})").hex()
+    
+    # 确保事件签名哈希以 "0x" 开头
+    if not event_signature_hash.startswith('0x'):
+        event_signature_hash = '0x' + event_signature_hash
+
+    output_queue.put(f"合约地址: {contract_address}\n")
+    output_queue.put(f"事件名称: {event_name}\n")
+    output_queue.put(f"事件签名哈希: {event_signature_hash}\n")
 
     if history_type == "time":
-        start_block = find_block_by_timestamp(w3, start.timestamp())
-        end_block = find_block_by_timestamp(w3, end.timestamp())
+        start_block = w3.eth.get_block(w3.eth.get_block_number(block_identifier=w3.eth.block_number))
+        while start_block['timestamp'] > int(start.timestamp()):
+            start_block = w3.eth.get_block(start_block['number'] - 1)
+        start_block = start_block['number']
+
+        end_block = w3.eth.get_block(w3.eth.block_number)
+        while end_block['timestamp'] < int(end.timestamp()):
+            end_block = w3.eth.get_block(end_block['number'] + 1)
+        end_block = end_block['number']
     else:
         start_block = start
         end_block = end
 
     output_queue.put(f"总区块范围: {start_block} 到 {end_block}\n")
-
-    event_abi = next((e for e in abi if e['type'] == 'event' and e['name'] == event_name), None)
-    if not event_abi:
-        output_queue.put(f"未找到指定的事件: {event_name}\n")
-        return []
-
-    event_signature = get_event_signature(event_abi)
-    if not event_signature:
-        output_queue.put(f"无法生成事件签名: {event_name}\n")
-        return []
-
-    event_signature_hash = w3.keccak(text=event_signature).hex()
     
     current_block = start_block
     event_data = []
@@ -109,12 +120,16 @@ def print_contract_events(
             output_queue.put(f"处理区块范围: {current_block} 到 {batch_end}\n")
             
             try:
-                logs = w3.eth.get_logs({
+                
+                logs_filter = {
                     'fromBlock': current_block,
                     'toBlock': batch_end,
                     'address': contract_address,
                     'topics': [event_signature_hash]
-                })
+                }
+                output_queue.put(f"日志过滤器: {logs_filter}\n")
+                
+                logs = w3.eth.get_logs(logs_filter)
                 output_queue.put(f"事件 {event_name} 在区块 {current_block} 到 {batch_end} 找到 {len(logs)} 条日志\n")
                 
                 futures = [executor.submit(process_log, w3, contract, event_name, log) for log in logs]
@@ -129,10 +144,11 @@ def print_contract_events(
                 
             except Exception as e:
                 output_queue.put(f"获取日志时出错: {str(e)}\n")
+                output_queue.put(f"错误类型: {type(e)}\n")
+                output_queue.put(f"错误详情: {e.args}\n")
             
             current_block = batch_end + 1
 
-    output_queue.put(f"print_contract_events 完成，返回 {len(event_data)} 个事件\n")
     return event_data
 
 def monitor_new_events(
@@ -163,6 +179,8 @@ def monitor_new_events(
         return []
 
     event_signature_hash = Web3.to_hex(w3.keccak(text=event_signature))
+    if not event_signature_hash.startswith('0x'):
+        event_signature_hash = '0x' + event_signature_hash
     output_queue.put(f'event_signature_hash: {event_signature_hash}\n')
     
     latest_block = w3.eth.get_block('latest')
@@ -238,3 +256,4 @@ def parse_attribute_dict(args_str):
             args_dict[key] = value
         return args_dict
     return {}
+
