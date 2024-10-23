@@ -19,6 +19,9 @@ class EventMonitorGUI:
         master.title("合约事件监听器")
         master.geometry("600x950")
         
+        self.config_file = "last_config.json"
+        self.load_last_config()
+        
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
@@ -33,6 +36,66 @@ class EventMonitorGUI:
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(master, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=14, column=0, columnspan=3, pady=10, sticky='ew')
+
+        self.fill_last_data()
+        
+        # 在窗口关闭时保存配置
+        self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def load_last_config(self):
+        if os.path.exists(self.config_file):
+            with open(self.config_file, 'r') as f:
+                self.last_config = json.load(f)
+        else:
+            self.last_config = {}
+
+    def save_current_config(self):
+        current_config = {
+            'contract_address': self.contract_address_entry.get(),
+            'event_name': self.event_name_entry.get(),
+            'rpc_url': self.rpc_url_entry.get(),
+            'abi_input_type': self.abi_input_var.get(),
+            'abi_file_path': self.abi_path_entry.get(),
+            'abi_manual': self.abi_text.get("1.0", tk.END),
+            'mode': self.mode_var.get(),
+            'history_type': self.history_type_var.get(),
+            'start_time': self.start_time_entry.get(),
+            'end_time': self.end_time_entry.get(),
+            'start_block': self.start_block_entry.get(),
+            'end_block': self.end_block_entry.get()
+        }
+        with open(self.config_file, 'w') as f:
+            json.dump(current_config, f)
+
+    def fill_last_data(self):
+        if self.last_config:
+            self.contract_address_entry.insert(0, self.last_config.get('contract_address', ''))
+            self.event_name_entry.insert(0, self.last_config.get('event_name', ''))
+            self.rpc_url_entry.insert(0, self.last_config.get('rpc_url', ''))
+            
+            abi_input_type = self.last_config.get('abi_input_type', 'file')
+            self.abi_input_var.set(abi_input_type)
+            self.toggle_abi_input()
+            
+            if abi_input_type == 'file':
+                self.abi_path_entry.insert(0, self.last_config.get('abi_file_path', ''))
+            else:
+                self.abi_text.insert(tk.END, self.last_config.get('abi_manual', ''))
+            
+            self.mode_var.set(self.last_config.get('mode', 'live'))
+            self.toggle_history_mode()
+            
+            self.history_type_var.set(self.last_config.get('history_type', 'time'))
+            self.toggle_history_type()
+            
+            self.start_time_entry.insert(0, self.last_config.get('start_time', ''))
+            self.end_time_entry.insert(0, self.last_config.get('end_time', ''))
+            self.start_block_entry.insert(0, self.last_config.get('start_block', ''))
+            self.end_block_entry.insert(0, self.last_config.get('end_block', ''))
+
+    def on_closing(self):
+        self.save_current_config()
+        self.master.destroy()
 
     def create_widgets(self):
         frame = ttk.Frame(self.master, padding="10")
@@ -288,6 +351,9 @@ class EventMonitorGUI:
             self.event_data.extend(events)
         self.output_queue.put(f"历史模式监听完成，找到 {len(events)} 个事件\n")
         self.output_queue.put(f"self.event_data 更新，当前长度：{len(self.event_data)}\n")
+        
+        # 停止监听，但不退出 UI
+        self.stop_monitoring_thread()
 
     def run_live_mode(self, contract_address, abi, rpc_url, event_name):
         self.output_queue.put("开始实时监听...\n")
@@ -301,23 +367,10 @@ class EventMonitorGUI:
 
     def stop_monitoring_thread(self):
         self.stop_monitoring.set()
-        self.stop_button.config(state="disabled")
-        self.output_queue.put("正在停止监听，请稍候...\n")
-        self.master.after(100, self.check_thread_stopped)
-
-    def check_thread_stopped(self):
-        if self.monitoring_thread and self.monitoring_thread.is_alive():
-            self.master.after(100, self.check_thread_stopped)
-        else:
-            self.finalize_stop()
-
-    def finalize_stop(self):
         self.start_button.config(state="normal")
+        self.stop_button.config(state="disabled")
         self.save_button.config(state="normal")
-        with self.event_data_lock:
-            event_count = len(self.event_data)
-        self.output_queue.put(f"监听已停止，总共收集到 {event_count} 个事件\n")
-        self.update_output()
+        self.output_queue.put("监听已停止\n")
 
     def save_to_csv(self):
         with self.event_data_lock:
@@ -330,7 +383,7 @@ class EventMonitorGUI:
             # 定义字段顺序
             main_fields = ["时间戳", "区块号", "交易哈希", "发送者", "接收者"]
             
-            # 获所有可能的字段名，包括展开的事件参数
+            # 获取所有可能的字段名，包括展开的事件参数
             all_fields = set()
             args_fields = set()
             for event in local_event_data:
@@ -358,7 +411,9 @@ class EventMonitorGUI:
             event_name = self.event_name_entry.get()
             default_filename = f"{contract_name}_{event_name}.csv"
 
+            # 使用当前目录作为初始目录
             filename = filedialog.asksaveasfilename(
+                initialdir=".",  # 设置初始目录为当前目录
                 initialfile=default_filename,
                 defaultextension=".csv",
                 filetypes=[("CSV 文件", "*.csv")]
@@ -396,7 +451,7 @@ class EventMonitorGUI:
 
     def fill_test_data(self):
         # 修改测试数据填充函数，不自动填写 RPC 地址
-        # 默认的合约地址
+        # 默认的合约址
         default_address = "0xdAC17F958D2ee523a2206206994597C13D831ec7"  # 使用校验和地址
         self.contract_address_entry.delete(0, tk.END)
         self.contract_address_entry.insert(0, default_address)
