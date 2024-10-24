@@ -21,23 +21,30 @@ def initialize_web3(rpc_url: str) -> Web3:
     logger.info(f"最新区块号: {w3.eth.block_number}")
     return w3
 
-def find_block_by_timestamp(w3: Web3, target_timestamp: float) -> int:
-    """使用二分法找到最接近目标时间戳的区块。"""
+def find_block_by_timestamp(w3: Web3, target_timestamp: float, output_queue: Any) -> int:
+    """使用二分法找到最接近目标时间戳的区块，并记录所花时间和请求次数。"""
     left = 1
     right = w3.eth.get_block('latest')['number']
+    request_count = 0
+    start_time = time.time()
 
     while left <= right:
         mid = (left + right) // 2
         block = w3.eth.get_block(mid)
+        request_count += 1
         
         if block['timestamp'] == target_timestamp:
-            return mid
+            break
         elif block['timestamp'] < target_timestamp:
             left = mid + 1
         else:
             right = mid - 1
 
-    return right
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    output_queue.put(f"查找区块花费时间: {elapsed_time:.2f}秒，请求次数: {request_count}\n")
+    
+    return right if block['timestamp'] != target_timestamp else mid
 
 def get_event_signature(event_abi: Dict) -> str:
     """从事件 ABI 生成事件签名。"""
@@ -94,18 +101,19 @@ def print_contract_events(
     output_queue.put(f"事件签名哈希: {event_signature_hash}\n")
 
     if history_type == "time":
-        start_block = w3.eth.get_block(w3.eth.get_block_number(block_identifier=w3.eth.block_number))
-        while start_block['timestamp'] > int(start.timestamp()):
-            start_block = w3.eth.get_block(start_block['number'] - 1)
-        start_block = start_block['number']
+        latest_block = w3.eth.get_block('latest')
+        
+        # 使用二分法查找最接近开始时间戳的区块
+        start_block = find_block_by_timestamp(w3, int(start.timestamp()), output_queue)
 
-        end_block = w3.eth.get_block(w3.eth.block_number)
-        while end_block['timestamp'] < int(end.timestamp()):
-            end_block = w3.eth.get_block(end_block['number'] + 1)
-        end_block = end_block['number']
+        if isinstance(end, datetime) and end != datetime.now():
+            # 使用二分法查找最接近结束时间戳的区块
+            end_block = find_block_by_timestamp(w3, int(end.timestamp()), output_queue)
+        else:
+            end_block = latest_block['number']
     else:
         start_block = start
-        end_block = end
+        end_block = end if end != 0 else w3.eth.block_number
 
     output_queue.put(f"总区块范围: {start_block} 到 {end_block}\n")
     
