@@ -60,9 +60,9 @@ class EventMonitorGUI:
             'mode': self.mode_var.get(),
             'history_type': self.history_type_var.get(),
             'start_time': self.start_time_entry.get(),
-            'end_time': self.end_time_entry.get(),
+            'end_time': self.end_time_entry.get() or '0',
             'start_block': self.start_block_entry.get(),
-            'end_block': self.end_block_entry.get()
+            'end_block': self.end_block_entry.get() or '0'
         }
         with open(self.config_file, 'w') as f:
             json.dump(current_config, f)
@@ -89,9 +89,9 @@ class EventMonitorGUI:
             self.toggle_history_type()
             
             self.start_time_entry.insert(0, self.last_config.get('start_time', ''))
-            self.end_time_entry.insert(0, self.last_config.get('end_time', ''))
+            self.end_time_entry.insert(0, self.last_config.get('end_time', '0'))
             self.start_block_entry.insert(0, self.last_config.get('start_block', ''))
-            self.end_block_entry.insert(0, self.last_config.get('end_block', ''))
+            self.end_block_entry.insert(0, self.last_config.get('end_block', '0'))
 
     def on_closing(self):
         self.save_current_config()
@@ -167,10 +167,7 @@ class EventMonitorGUI:
 
         ttk.Label(self.time_frame, text="结束时间 (YYYY-MM-DD):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.end_time_entry = ttk.Entry(self.time_frame, width=20)
-        self.end_time_entry.insert(0, "留空表示使用当前时间")
         self.end_time_entry.grid(row=1, column=1, padx=5, pady=5)
-        self.end_time_entry.bind("<FocusIn>", lambda e: self.on_entry_click(e, "留空表示使用当前时间"))
-        self.end_time_entry.bind("<FocusOut>", lambda e: self.on_focus_out(e, "留空表示使用当前时间"))
 
         # 区块范围输入
         self.block_frame = ttk.Frame(self.history_frame)
@@ -183,10 +180,7 @@ class EventMonitorGUI:
 
         ttk.Label(self.block_frame, text="结束区块:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.end_block_entry = ttk.Entry(self.block_frame, width=20)
-        self.end_block_entry.insert(0, "留空表示使用最新区块")
         self.end_block_entry.grid(row=1, column=1, padx=5, pady=5)
-        self.end_block_entry.bind("<FocusIn>", lambda e: self.on_entry_click(e, "留空表示使用最新区块"))
-        self.end_block_entry.bind("<FocusOut>", lambda e: self.on_focus_out(e, "留空表示使用最新区块"))
 
         # 开始按钮
         self.start_button = ttk.Button(frame, text="开始监听", command=self.start_monitoring)
@@ -213,7 +207,7 @@ class EventMonitorGUI:
         scrollbar_x.grid(row=1, column=0, sticky="ew")
         self.output_text.configure(xscrollcommand=scrollbar_x.set)
 
-        # 添加保存按钮
+        # 添加存按钮
         self.save_button = ttk.Button(frame, text="保存到CSV", command=self.save_to_csv, state="disabled")
         self.save_button.grid(row=12, column=0, columnspan=3, pady=10)
 
@@ -237,7 +231,7 @@ class EventMonitorGUI:
 
     def get_abi(self):
         if self.abi_input_var.get() == "file":
-            abi_path = self.abi_path_entry.get()
+            abi_path = self.abi_path_entry.get().strip()
             if not abi_path:
                 messagebox.showerror("错误", "请选择ABI文件")
                 return None
@@ -249,7 +243,8 @@ class EventMonitorGUI:
                 return None
         else:
             try:
-                return json.loads(self.abi_text.get("1.0", tk.END))
+                abi_text = self.abi_text.get("1.0", tk.END).strip()
+                return json.loads(abi_text)
             except json.JSONDecodeError:
                 messagebox.showerror("错误", "ABI格式不正确")
                 return None
@@ -269,7 +264,7 @@ class EventMonitorGUI:
             self.block_frame.grid()
 
     def start_monitoring(self):
-        contract_address = self.contract_address_entry.get()
+        contract_address = self.contract_address_entry.get().strip()
         try:
             contract_address = Web3.to_checksum_address(contract_address)
         except ValueError as e:
@@ -277,8 +272,8 @@ class EventMonitorGUI:
             return
 
         abi = self.get_abi()
-        event_name = self.event_name_entry.get()
-        rpc_url = self.rpc_url_entry.get()
+        event_name = self.event_name_entry.get().strip()
+        rpc_url = self.rpc_url_entry.get().strip()
         mode = self.mode_var.get()
 
         if not all([contract_address, abi, event_name, rpc_url]):
@@ -299,13 +294,13 @@ class EventMonitorGUI:
             history_type = self.history_type_var.get()
             if history_type == "time":
                 try:
-                    start_time = datetime.strptime(self.start_time_entry.get(), '%Y-%m-%d')
-                    end_time_str = self.end_time_entry.get()
-                    if end_time_str and end_time_str != "留空表示使用当前时间":
-                        end_time = datetime.strptime(end_time_str, '%Y-%m-%d')
-                    else:
+                    start_time = datetime.strptime(self.start_time_entry.get().strip(), '%Y-%m-%d')
+                    end_time_str = self.end_time_entry.get().strip()
+                    if end_time_str == '0':
                         end_time = datetime.now()
                         self.output_queue.put(f"使用当前时间作为结束时间: {end_time}\n")
+                    else:
+                        end_time = datetime.strptime(end_time_str, '%Y-%m-%d')
                 except ValueError:
                     messagebox.showerror("错误", "请输入有效的日期格式 (YYYY-MM-DD)")
                     return
@@ -313,14 +308,14 @@ class EventMonitorGUI:
                                                           args=(contract_address, abi, start_time, end_time, rpc_url, event_name, "time"))
             else:
                 try:
-                    start_block = int(self.start_block_entry.get())
-                    end_block_str = self.end_block_entry.get()
-                    if end_block_str and end_block_str != "留空表示使用最新区块":
-                        end_block = int(end_block_str)
-                    else:
+                    start_block = int(self.start_block_entry.get().strip())
+                    end_block_str = self.end_block_entry.get().strip()
+                    if end_block_str == '0':
                         w3 = Web3(Web3.HTTPProvider(rpc_url))
                         end_block = w3.eth.get_block('latest')['number']
                         self.output_queue.put(f"使用最新区块作为结束区块: {end_block}\n")
+                    else:
+                        end_block = int(end_block_str)
                 except ValueError:
                     messagebox.showerror("错误", "请输入有效的区块号")
                     return
@@ -476,24 +471,6 @@ class EventMonitorGUI:
             messagebox.showwarning("警告", f"未找到默认的 ABI 文件: {default_abi_path}")
 
         messagebox.showinfo("提示", "测试数据已填充（不包括 RPC 地址）")
-
-    def on_entry_click(self, event, default_text):
-        """当用户点击输入框时，如果内容是默认文本，则清空"""
-        if event.widget.get() == default_text:
-            event.widget.delete(0, "end")
-            event.widget.config(foreground='black')
-        if event.widget == self.end_block_entry and event.widget.get() == "留空表示使用最新区块":
-            event.widget.delete(0, "end")
-            event.widget.config(foreground='black')
-
-    def on_focus_out(self, event, default_text):
-        """当输入框失去焦点时，如果为空，则显示默认文本"""
-        if event.widget.get() == '':
-            event.widget.insert(0, default_text)
-            event.widget.config(foreground='grey')
-        if event.widget == self.end_block_entry and event.widget.get() == '':
-            event.widget.insert(0, "留空表示使用最新区块")
-            event.widget.config(foreground='grey')
 
 def main():
     root = tk.Tk()
